@@ -16,6 +16,7 @@ let canvasReal;
 let ctxReal;
 let canvas;
 let ctx;
+let pixiApp;
 const cwidth = 960;
 const cheight = 540;
 let pixelRatio;
@@ -2152,6 +2153,7 @@ let svgMenu2;
 let svgMenu6;
 let svgMenu2border;
 let svgMenu2borderimg;
+let svgMenu2_3Buttons = new Array(4);
 let preMenuBG;
 let svgTools = new Array(12);
 let svgMyLevelsIcons = new Array(5);
@@ -2181,24 +2183,12 @@ let musicSound = new Audio('data/the fiber 16x loop.wav');
 
 const scaleFactor = 3;
 
-// Creates an image object was a base64 src.
 function createImage(base64) {
 	return new Promise((resolve, reject) => {
-		let img = new Image();
-		img.src = base64;
-		if (base64.split(',')[0] == 'data:image/svg+xml;base64') {
-			img.onload = () => {
-				let rasterizerCanvas = document.createElement('canvas');
-				rasterizerCanvas.width = img.width*scaleFactor;
-				rasterizerCanvas.height = img.height*scaleFactor;
-				let rasterizerCanvasCtx = rasterizerCanvas.getContext('2d');
-				rasterizerCanvasCtx.drawImage(img, 0, 0, img.width*scaleFactor, img.height*scaleFactor);
-				resolve(rasterizerCanvas);
-			}
-			img.onerror = reject;
-		} else {
-			resolve(img);
-		}
+		let isSvg = base64.split(',')[0] === 'data:image/svg+xml;base64';
+		let texture = PIXI.Texture.from(base64, isSvg ? { resourceOptions: { scale: scaleFactor } } : {});
+		if (texture.baseTexture.valid) resolve(texture);
+		else texture.baseTexture.once('loaded', () => resolve(texture)).once('error', reject);
 	});
 }
 
@@ -2221,22 +2211,39 @@ function getPixelRatio(quality) {
 async function loadingScreen() {
 	pixelRatio = getPixelRatio(0);
 
-	// Initialize Canvas Stuff
 	canvasReal = document.getElementById('cnv');
-	ctxReal = canvasReal.getContext('2d');
 	canvasReal.style.width = cwidth + 'px';
 	canvasReal.style.height = cheight + 'px';
-	canvas = document.createElement('canvas');
+	pixiApp = new PIXI.Application({
+		view: canvasReal,
+		width: cwidth,
+		height: cheight,
+		resolution: pixelRatio,
+		autoDensity: true,
+		autoStart: false,
+		antialias: false,
+		backgroundAlpha: 0
+	});
+	pixiApp.pixiTextCache = new Map();
+	pixiApp.pixiTextMeasures = new Map();
+	pixiApp.pixiTextRetired = [];
+	canvas = new PixiCanvas(Math.floor(cwidth * pixelRatio), Math.floor(cheight * pixelRatio), pixiApp);
 	canvas.width = cwidth;
 	canvas.height = cheight;
 	ctx = canvas.getContext('2d');
-	// Account for Pixel Density
 	canvas.width = Math.floor(cwidth * pixelRatio);
 	canvas.height = Math.floor(cheight * pixelRatio);
-	ctx.scale(pixelRatio, pixelRatio);
-	canvasReal.width = Math.floor(cwidth * pixelRatio);
-	canvasReal.height = Math.floor(cheight * pixelRatio);
-	ctxReal.scale(pixelRatio, pixelRatio);
+	ctxReal = {
+		drawImage(source) {
+			pixiApp.renderer.render(source.root);
+			for (let text of pixiApp.pixiTextRetired) text.destroy(true);
+			pixiApp.pixiTextRetired = [];
+			if (pixiApp.pixitextures) {
+				for (let texture of pixiApp.pixitextures) texture.destroy(true);
+				pixiApp.pixitextures = [];
+			}
+		}
+	};
 
 	// Background
 	ctx.fillStyle = '#999966';
@@ -2335,6 +2342,9 @@ async function loadingScreen() {
 	svgMenu6 = await createImage(resourceData['menu6.svg']);
 	svgMenu2border = await createImage(resourceData['menu2border.svg']);
 	svgMenu2borderimg = await createImage(resourceData['menu2borderimg.png']);
+	for (let i = 0; i < svgMenu2_3Buttons.length; i++) {
+		svgMenu2_3Buttons[i] = await createImage(resourceData['menu2-3button' + (i + 1).toString().padStart(4, '0') + '.svg']);
+	}
 	preMenuBG = await createImage(resourceData['premenubg.png']);
 	for (let i = 0; i < svgTools.length; i++) {
 		svgTools[i] = await createImage(resourceData['lc/tool' + i.toString().padStart(4, '0') + '.svg']);
@@ -2747,6 +2757,13 @@ function setQual() {
 	} else {
 		pixelRatio = getPixelRatio(-1);
 	}
+	pixiApp.renderer.resolution = pixelRatio;
+	pixiApp.renderer.resize(cwidth, cheight);
+	for (let text of pixiApp.pixiTextCache.values()) pixiApp.pixiTextRetired.push(text);
+	pixiApp.pixiTextCache.clear();
+	for (let surface of [canvas, osc1, osc2, osc3, osc4, osc5, ...thumbs, thumbBig]) {
+		if (surface) surface.invalidateTexture();
+	}
 	canvas.width = cwidth * pixelRatio;
 	canvas.height = cheight * pixelRatio;
 }
@@ -2838,7 +2855,7 @@ function drawMenu2_3Button(id, x, y, action) {
 	ctx.fillStyle = fill;
 
 	ctx.translate(x, y);
-	ctx.fill(menu2_3Buttons[id]);
+	ctx.drawImage(svgMenu2_3Buttons[id], 0, 0, menu2_3ButtonSize.w, menu2_3ButtonSize.h);
 	ctx.translate(-x, -y);
 	ctx.globalAlpha = 1;
 }
@@ -3375,10 +3392,10 @@ function resetLevel() {
 
 	osc1.width = Math.floor(levelWidth * 30 * pixelRatio);
 	osc1.height = Math.floor(levelHeight * 30 * pixelRatio);
-	osctx1.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx1.setTransform(1, 0, 0, 1, 0, 0);
 	osc2.width = Math.floor(levelWidth * 30 * pixelRatio);
 	osc2.height = Math.floor(levelHeight * 30 * pixelRatio);
-	osctx2.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx2.setTransform(1, 0, 0, 1, 0, 0);
 	drawStaticTiles();
 	recover = false;
 	cornerHangTimer = 0;
@@ -3440,7 +3457,7 @@ function drawLevelBG() {
 	let bgScale = Math.max(bgXScale, bgYScale);
 	osc4.width = Math.floor((bgScale / 100) * cwidth * pixelRatio);
 	osc4.height = Math.floor((bgScale / 100) * cheight * pixelRatio);
-	osctx4.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx4.setTransform(1, 0, 0, 1, 0, 0);
 	osctx4.drawImage(
 		imgBgs[playMode >= 2 ? selectedBg : bgs[currentLevel]],
 		0,
@@ -3843,7 +3860,7 @@ function bounceY(amt, time, t) {
 function getTintedCanvasImage(img, a, color) {
 	osc3.width = img.width * pixelRatio;
 	osc3.height = img.height * pixelRatio;
-	osctx3.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx3.setTransform(1, 0, 0, 1, 0, 0);
 	osctx3.save();
 	osctx3.fillStyle = color;
 	osctx3.globalAlpha = a;
@@ -5199,7 +5216,7 @@ function lslilcPopUp(locOnPage) {
 function resetLCOSC() {
 	osc1.width = Math.floor(cwidth * pixelRatio);
 	osc1.height = Math.floor(cheight * pixelRatio);
-	osctx1.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx1.setTransform(1, 0, 0, 1, 0, 0);
 	setLCBG();
 
 	let bgpr = 2;
@@ -5208,18 +5225,18 @@ function resetLCOSC() {
 	let bgdist = 110;
 	osc2.width = Math.floor(300 * pixelRatio);
 	osc2.height = Math.floor(Math.floor(imgBgs.length / bgpr + 1) * bgdist * pixelRatio);
-	osctx2.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx2.setTransform(1, 0, 0, 1, 0, 0);
 	for (let i = 0; i < imgBgs.length; i++) {
 		osctx2.drawImage(imgBgs[i],bgdist - bgw + (i % bgpr) * bgdist,bgdist - bgh + Math.floor(i / bgpr) * bgdist,bgw,bgh);
 	}
 
 	osc3.width = Math.floor(cwidth * pixelRatio);
 	osc3.height = Math.floor(cheight * pixelRatio);
-	osctx3.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx3.setTransform(1, 0, 0, 1, 0, 0);
 
 	osc5.width = Math.floor(660 * pixelRatio);
 	osc5.height = Math.floor(480 * pixelRatio);
-	osctx5.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	osctx5.setTransform(1, 0, 0, 1, 0, 0);
 	updateLCtiles();
 }
 
@@ -7605,43 +7622,43 @@ function handlePaste(e) {
 }
 
 function setup() {
-	osc1 = document.createElement('canvas');
+	osc1 = new PixiCanvas(cwidth, cheight, pixiApp);
 	osc1.width = cwidth;
 	osc1.height = cheight;
 	osctx1 = osc1.getContext('2d');
 
-	osc2 = document.createElement('canvas');
+	osc2 = new PixiCanvas(cwidth, cheight, pixiApp);
 	osc2.width = cwidth;
 	osc2.height = cheight;
 	osctx2 = osc2.getContext('2d');
 
-	osc3 = document.createElement('canvas');
+	osc3 = new PixiCanvas(cwidth, cheight, pixiApp);
 	osc3.width = cwidth;
 	osc3.height = cheight;
 	osctx3 = osc3.getContext('2d');
 
-	osc4 = document.createElement('canvas');
+	osc4 = new PixiCanvas(cwidth, cheight, pixiApp);
 	osc4.width = cwidth;
 	osc4.height = cheight;
 	osctx4 = osc4.getContext('2d');
 
-	osc5 = document.createElement('canvas');
+	osc5 = new PixiCanvas(cwidth, cheight, pixiApp);
 	osc5.width = cwidth;
 	osc5.height = cheight;
 	osctx5 = osc5.getContext('2d');
 
 	for (let i = 0; i < thumbs.length; i++) {
-		thumbs[i] = document.createElement('canvas');
+		thumbs[i] = new PixiCanvas(Math.floor(192 * pixelRatio), Math.floor(108 * pixelRatio), pixiApp);
 		thumbs[i].width = Math.floor(192 * pixelRatio);
 		thumbs[i].height = Math.floor(108 * pixelRatio);
 		thumbsctx[i] = thumbs[i].getContext('2d');
-		thumbsctx[i].scale(pixelRatio * 0.2, pixelRatio * 0.2);
+		thumbsctx[i].scale(0.2, 0.2);
 	}
-	thumbBig = document.createElement('canvas');
+	thumbBig = new PixiCanvas(Math.floor(384 * pixelRatio), Math.floor(216 * pixelRatio), pixiApp);
 	thumbBig.width = Math.floor(384 * pixelRatio);
 	thumbBig.height = Math.floor(216 * pixelRatio);
 	thumbBigctx = thumbBig.getContext('2d');
-	thumbBigctx.scale(pixelRatio * 0.4, pixelRatio * 0.4);
+	thumbBigctx.scale(0.4, 0.4);
 
 	window.addEventListener('pointermove', mousemove);
 	window.addEventListener('pointerdown', mousedown);
@@ -10568,7 +10585,7 @@ function draw() {
 	if (wipeTimer >= 60) wipeTimer = 0;
 	if (wipeTimer >= 1) wipeTimer++;
 
-	ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
 	if (pmenuScreen == 2) {
 		drawLevelMapBorder();
 	} else if (pmenuScreen == 3) {
